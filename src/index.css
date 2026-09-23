@@ -1,0 +1,66 @@
+@import "tailwindcss";
+
+@layer base {
+  body {
+    font-family: 'Plus Jakarta Sans', system-ui, -apple-system, sans-serif;
+  }
+}
+
+/* CPA / Accounting Underline conventions */
+.acc-subtotal {
+  border-top: 1px solid #94a3b8;
+}
+
+.acc-total {
+  border-top: 1px solid #0f172a;
+  border-bottom: 3px double #0f172a;
+}
+
+.font-financial {
+  font-family: 'JetBrains Mono', monospace;
+  font-variant-numeric: tabular-nums;
+}
+
+.font-serif-title {
+  font-family: 'Newsreader', Georgia, serif;
+}
+
+@media print {
+  @page {
+    size: letter portrait;
+    margin: 15mm 15mm 15mm 15mm;
+  }
+
+  body {
+    background-color: white !important;
+    color: black !important;
+    font-size: 11pt;
+  }
+
+  .no-print {
+    display: none !important;
+  }
+
+  .print-only {
+    display: block !important;
+  }
+
+  .print-break-inside-avoid {
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+
+  .print-break-before {
+    break-before: page;
+    page-break-before: always;
+  }
+
+  .acc-total {
+    border-top: 1px solid #000 !important;
+    border-bottom: 3px double #000 !important;
+  }
+
+  .acc-subtotal {
+    border-top: 1px solid #475569 !important;
+  }
+}

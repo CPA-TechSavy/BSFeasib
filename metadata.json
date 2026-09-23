@@ -1,0 +1,6 @@
+{
+  "name": "Feasibility Study Financial Statements Builder",
+  "description": "Comprehensive financial statement generator and feasibility metrics analyzer (Income Statement, Balance Sheet, Cash Flow, NPV, IRR, Payback Period, Break-even, and Ratios) for business feasibility studies.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
