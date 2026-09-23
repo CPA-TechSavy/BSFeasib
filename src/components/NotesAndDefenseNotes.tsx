@@ -1084,7 +1084,7 @@ export default function NotesAndDefenseNotes({
                       <div className="p-2.5 bg-slate-50 rounded-lg border border-slate-100">
                         <span className="text-[10px] text-slate-500 uppercase font-semibold block">Statutory Income Tax</span>
                         <span className="font-bold text-slate-900 font-financial">{project.taxRatePercent}%</span>
-                        <span className="text-[10px] text-slate-500 block">CREATE Act standard</span>
+                        <span className="text-[10px] text-slate-500 block">CREATE Law 20% / EOPT Law 25%</span>
                       </div>
                       <div className="p-2.5 bg-slate-50 rounded-lg border border-slate-100">
                         <span className="text-[10px] text-slate-500 uppercase font-semibold block">Hurdle Discount Rate</span>
@@ -1274,7 +1274,7 @@ export default function NotesAndDefenseNotes({
                   <strong>3.12 Provision for Income Taxes:</strong> Current corporate income tax is provided at the statutory
                   rate of <span className="font-semibold text-slate-900">{project.taxRatePercent}%</span> on taxable operating
                   profits, after deducting allowable manufacturing, administrative, and financing expense deductions in
-                  compliance with the National Internal Revenue Code (NIRC) and the CREATE Act.
+                  compliance with the National Internal Revenue Code (NIRC), the CREATE Law (20% MSME rate), and the EOPT Law (25% standard corporate rate).
                 </p>
               </div>
             </div>

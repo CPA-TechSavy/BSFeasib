@@ -15,6 +15,21 @@ import NotesAndDefenseNotes from './components/NotesAndDefenseNotes';
 import CloudflareDeployModal from './components/CloudflareDeployModal';
 import BankInterestAndLoanModal from './components/BankInterestAndLoanModal';
 import CompanyAccountModal from './components/CompanyAccountModal';
+import GoogleLoginModal from './components/GoogleLoginModal';
+import GoogleAuthGate from './components/GoogleAuthGate';
+import AccessPendingScreen from './components/AccessPendingScreen';
+import AdminApprovalModal from './components/AdminApprovalModal';
+import { useAuth } from './context/AuthContext';
+import { saveUserProjectToCloud, loadUserProjectFromCloud } from './firebase';
+import {
+  AccessRequest,
+  isUserAdmin,
+  getOrCreateAccessRequest,
+  subscribeToUserAccessStatus,
+  subscribeToAllAccessRequests,
+  handleEmailActionToken,
+  PRIMARY_ADMIN_EMAIL,
+} from './services/accessControl';
 import {
   FileText,
   BarChart3,
@@ -25,6 +40,7 @@ import {
   CheckCircle2,
   Landmark,
   ChevronDown,
+  Loader2,
 } from 'lucide-react';
 
 const STORAGE_KEY = 'undergrad_feasibility_cleanslate_v1';
@@ -63,11 +79,32 @@ export default function App() {
     return BLANK_PROJECT;
   });
 
+  const { user, loading: authLoading, isLoginModalOpen, setIsLoginModalOpen } = useAuth();
   const [activeMainView, setActiveMainView] = useState<MainViewType>('statements');
+
+  // Administrator & Access Control States
+  const isAdmin = useMemo(() => isUserAdmin(user?.email), [user?.email]);
+  const [userAccessRequest, setUserAccessRequest] = useState<AccessRequest | null>(null);
+  const [isAccessStatusLoading, setIsAccessStatusLoading] = useState(true);
+  const [allAccessRequests, setAllAccessRequests] = useState<AccessRequest[]>([]);
+  const [isAdminModalOpen, setIsAdminModalOpen] = useState(false);
+  const [actionNotice, setActionNotice] = useState<{
+    type: 'success' | 'error';
+    message: string;
+  } | null>(null);
 
   const [isCloudflareModalOpen, setIsCloudflareModalOpen] = useState(false);
   const [isBankModalOpen, setIsBankModalOpen] = useState(false);
   const [isCompanyModalOpen, setIsCompanyModalOpen] = useState(false);
+
+  // Cloud Sync state for authenticated Google user
+  const [isSavingCloud, setIsSavingCloud] = useState(false);
+  const [cloudToast, setCloudToast] = useState<{
+    type: 'success' | 'info' | 'error';
+    message: string;
+    actionLabel?: string;
+    onAction?: () => void;
+  } | null>(null);
 
   // Auto-save to localStorage
   useEffect(() => {
@@ -78,6 +115,150 @@ export default function App() {
     }
   }, [project]);
 
+  // When Google user logs in, check if they have a saved cloud project
+  useEffect(() => {
+    if (!user) return;
+
+    let isMounted = true;
+    async function checkCloudProject() {
+      try {
+        const cloudData = await loadUserProjectFromCloud(user!.uid, 'active');
+        if (isMounted && cloudData && cloudData.title) {
+          // If the local project is empty or user wants to restore cloud project
+          setCloudToast({
+            type: 'info',
+            message: `Found cloud backup: "${cloudData.title}". Would you like to load it?`,
+            actionLabel: 'Load from Cloud',
+            onAction: () => {
+              setProject(cloudData);
+              setCloudToast({
+                type: 'success',
+                message: `Successfully restored "${cloudData.title}" from your Google Account!`,
+              });
+              setTimeout(() => setCloudToast(null), 4000);
+            },
+          });
+        }
+      } catch (err) {
+        console.warn('Could not check cloud project:', err);
+      }
+    }
+
+    checkCloudProject();
+    return () => {
+      isMounted = false;
+    };
+  }, [user]);
+
+  // Check for email approval/deny action link query parameters (?action=approve_access&userId=...&token=...)
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const action = params.get('action');
+    const userId = params.get('userId');
+    const token = params.get('token');
+
+    if (action === 'admin_approvals') {
+      setIsAdminModalOpen(true);
+      window.history.replaceState({}, document.title, window.location.pathname);
+      return;
+    }
+
+    if ((action === 'approve_access' || action === 'deny_access') && userId && token) {
+      handleEmailActionToken(
+        action,
+        userId,
+        token,
+        user?.email || PRIMARY_ADMIN_EMAIL
+      ).then((res) => {
+        setActionNotice({
+          type: res.success ? 'success' : 'error',
+          message: res.message,
+        });
+        window.history.replaceState({}, document.title, window.location.pathname);
+        setTimeout(() => setActionNotice(null), 6000);
+      });
+    }
+  }, [user]);
+
+  // Handle access request authorization lifecycle
+  useEffect(() => {
+    if (!user) {
+      setUserAccessRequest(null);
+      setIsAccessStatusLoading(false);
+      return;
+    }
+
+    setIsAccessStatusLoading(true);
+
+    if (isAdmin) {
+      // Admin is authorized automatically
+      setIsAccessStatusLoading(false);
+      // Subscribe to all requests to manage them
+      const unsubAll = subscribeToAllAccessRequests((reqs) => {
+        setAllAccessRequests(reqs);
+      });
+      return () => unsubAll();
+    }
+
+    // Normal Google user: fetch or create request, then listen in real-time
+    let unsubUser: (() => void) | null = null;
+    let isCancelled = false;
+
+    getOrCreateAccessRequest(user)
+      .then(({ request }) => {
+        if (isCancelled) return;
+        setUserAccessRequest(request);
+        setIsAccessStatusLoading(false);
+
+        // Listen in real-time for CPA approval changes
+        unsubUser = subscribeToUserAccessStatus(user.uid, (updated) => {
+          if (isCancelled) return;
+          if (updated) {
+            setUserAccessRequest(updated);
+          }
+          setIsAccessStatusLoading(false);
+        });
+      })
+      .catch((err) => {
+        console.error('Failed to initialize access request:', err);
+        if (!isCancelled) {
+          setIsAccessStatusLoading(false);
+        }
+      });
+
+    return () => {
+      isCancelled = true;
+      if (unsubUser) unsubUser();
+    };
+  }, [user, isAdmin]);
+
+  // Handle manual or automatic cloud save for Google user
+  const handleSaveToCloud = async () => {
+    if (!user) {
+      setIsLoginModalOpen(true);
+      return;
+    }
+
+    setIsSavingCloud(true);
+    try {
+      await saveUserProjectToCloud(user.uid, 'active', project);
+      setCloudToast({
+        type: 'success',
+        message: `Feasibility study "${project.title || 'Untitled'}" backed up to your Google Account!`,
+      });
+      setTimeout(() => setCloudToast(null), 4000);
+    } catch (err: any) {
+      console.error('Error saving to cloud:', err);
+      setCloudToast({
+        type: 'error',
+        message: 'Failed to back up to Google Cloud. Please try again.',
+      });
+      setTimeout(() => setCloudToast(null), 5000);
+    } finally {
+      setIsSavingCloud(false);
+    }
+  };
+
   // Reactive financial calculations
   const financials = useMemo(() => {
     return calculate5YearFinancials(project);
@@ -86,6 +267,63 @@ export default function App() {
   const metrics = useMemo(() => {
     return calculateFeasibilityMetrics(project, financials);
   }, [project, financials]);
+
+  // Loading state while checking Google authentication
+  if (authLoading) {
+    return (
+      <div className="min-h-screen bg-slate-900 flex flex-col items-center justify-center text-white p-4">
+        <div className="w-14 h-14 rounded-2xl bg-indigo-600/30 border border-indigo-500/40 flex items-center justify-center mb-4 shadow-xl shadow-indigo-500/20">
+          <Loader2 className="w-7 h-7 text-indigo-400 animate-spin" />
+        </div>
+        <p className="text-base font-semibold text-slate-100">Verifying Google Account...</p>
+        <p className="text-xs text-slate-400 mt-1">Please wait a moment</p>
+      </div>
+    );
+  }
+
+  // Enforce Google Account authentication before accessing the application
+  if (!user) {
+    return <GoogleAuthGate />;
+  }
+
+  // Loading state while checking access authorization
+  if (isAccessStatusLoading) {
+    return (
+      <div className="min-h-screen bg-slate-900 flex flex-col items-center justify-center text-white p-4">
+        <div className="w-14 h-14 rounded-2xl bg-amber-500/20 border border-amber-500/40 flex items-center justify-center mb-4 shadow-xl shadow-amber-500/10">
+          <Loader2 className="w-7 h-7 text-amber-400 animate-spin" />
+        </div>
+        <p className="text-base font-semibold text-slate-100">Checking Access Authorization...</p>
+        <p className="text-xs text-slate-400 mt-1">Reviewing permissions with John Joebert Suarez, CPA</p>
+      </div>
+    );
+  }
+
+  // If user is not admin and is not approved, block with AccessPendingScreen
+  if (!isAdmin && (!userAccessRequest || userAccessRequest.status !== 'approved')) {
+    return (
+      <AccessPendingScreen
+        request={
+          userAccessRequest || {
+            userId: user.uid,
+            email: user.email || '',
+            displayName: user.displayName || user.email?.split('@')[0] || 'User',
+            photoURL: user.photoURL || '',
+            status: 'pending',
+            requestedAt: new Date().toISOString(),
+            approvalToken: '',
+          }
+        }
+        onRefresh={() => {
+          setIsAccessStatusLoading(true);
+          getOrCreateAccessRequest(user).then(({ request }) => {
+            setUserAccessRequest(request);
+            setIsAccessStatusLoading(false);
+          });
+        }}
+      />
+    );
+  }
 
   return (
     <div className="min-h-screen flex flex-col bg-slate-100/70 text-slate-900 pb-20 md:pb-0">
@@ -98,7 +336,56 @@ export default function App() {
         onOpenCloudflareModal={() => setIsCloudflareModalOpen(true)}
         onOpenBankModal={() => setIsBankModalOpen(true)}
         onOpenCompanyModal={() => setIsCompanyModalOpen(true)}
+        onOpenGoogleLoginModal={() => setIsLoginModalOpen(true)}
+        isAdmin={isAdmin}
+        pendingAccessCount={allAccessRequests.filter((r) => r.status === 'pending').length}
+        onOpenAdminModal={() => setIsAdminModalOpen(true)}
       />
+
+      {/* Cloud Toast / Notification */}
+      {cloudToast && (
+        <div
+          role="status"
+          aria-live="polite"
+          className={`no-print fixed top-18 left-1/2 -translate-x-1/2 z-50 max-w-lg w-full px-4`}
+        >
+          <div
+            className={`p-3.5 rounded-xl shadow-xl border flex items-center justify-between gap-3 text-xs sm:text-sm font-medium ${
+              cloudToast.type === 'success'
+                ? 'bg-emerald-900 text-emerald-100 border-emerald-700'
+                : cloudToast.type === 'error'
+                ? 'bg-rose-900 text-rose-100 border-rose-700'
+                : 'bg-indigo-950 text-indigo-100 border-indigo-700'
+            }`}
+          >
+            <div className="flex items-center gap-2 min-w-0">
+              <span className="shrink-0 text-base">
+                {cloudToast.type === 'success' ? '✅' : cloudToast.type === 'error' ? '⚠️' : '☁️'}
+              </span>
+              <span className="truncate">{cloudToast.message}</span>
+            </div>
+
+            <div className="flex items-center gap-2 shrink-0">
+              {cloudToast.actionLabel && cloudToast.onAction && (
+                <button
+                  type="button"
+                  onClick={cloudToast.onAction}
+                  className="px-2.5 py-1 rounded-lg bg-white text-indigo-950 font-bold text-xs hover:bg-indigo-50 shadow-xs cursor-pointer transition"
+                >
+                  {cloudToast.actionLabel}
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={() => setCloudToast(null)}
+                className="text-slate-300 hover:text-white p-1 rounded cursor-pointer"
+              >
+                ✕
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Main Container */}
       <main className="flex-1 max-w-7xl w-full mx-auto px-3 sm:px-6 lg:px-8 py-4 sm:py-6">
@@ -323,6 +610,49 @@ export default function App() {
           onUpdateProject={setProject}
         />
       )}
+
+      {/* Action Notice Toast (e.g., when approving user via link) */}
+      {actionNotice && (
+        <div
+          role="status"
+          className="fixed top-5 left-1/2 -translate-x-1/2 z-50 max-w-md w-full px-4 animate-in fade-in"
+        >
+          <div
+            className={`p-4 rounded-2xl shadow-2xl border flex items-center justify-between gap-3 text-xs sm:text-sm font-semibold ${
+              actionNotice.type === 'success'
+                ? 'bg-emerald-900/95 text-emerald-100 border-emerald-600 shadow-emerald-950/40'
+                : 'bg-rose-900/95 text-rose-100 border-rose-600 shadow-rose-950/40'
+            }`}
+          >
+            <div className="flex items-center gap-2.5">
+              <span>{actionNotice.type === 'success' ? '🛡️' : '⚠️'}</span>
+              <span>{actionNotice.message}</span>
+            </div>
+            <button
+              onClick={() => setActionNotice(null)}
+              className="text-white/80 hover:text-white p-1 rounded-md"
+            >
+              ✕
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Google Login & Account Modal (Google Account Only) */}
+      <GoogleLoginModal
+        isOpen={isLoginModalOpen}
+        onClose={() => setIsLoginModalOpen(false)}
+        onSaveCloud={handleSaveToCloud}
+        isSavingCloud={isSavingCloud}
+      />
+
+      {/* CPA Access Authorization Management Console */}
+      <AdminApprovalModal
+        isOpen={isAdminModalOpen}
+        onClose={() => setIsAdminModalOpen(false)}
+        requests={allAccessRequests}
+        adminEmail={user?.email || PRIMARY_ADMIN_EMAIL}
+      />
     </div>
   );
 }

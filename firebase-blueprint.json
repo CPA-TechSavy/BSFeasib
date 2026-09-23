@@ -1,0 +1,63 @@
+{
+  "entities": {
+    "UserProfile": {
+      "title": "UserProfile",
+      "description": "User profile metadata stored upon Google sign-in",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string" },
+        "email": { "type": "string" },
+        "displayName": { "type": "string" },
+        "photoURL": { "type": "string" },
+        "createdAt": { "type": "string" },
+        "lastLoginAt": { "type": "string" }
+      },
+      "required": ["uid", "email"]
+    },
+    "UserProject": {
+      "title": "UserProject",
+      "description": "Feasibility project data saved by the authenticated Google user",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "userId": { "type": "string" },
+        "title": { "type": "string" },
+        "projectJson": { "type": "string" },
+        "updatedAt": { "type": "string" }
+      },
+      "required": ["id", "userId", "projectJson"]
+    },
+    "AccessRequest": {
+      "title": "AccessRequest",
+      "description": "User access approval request managed by suarezjohnjoebertcpa@gmail.com",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "email": { "type": "string" },
+        "displayName": { "type": "string" },
+        "photoURL": { "type": "string" },
+        "status": { "type": "string", "enum": ["pending", "approved", "rejected"] },
+        "requestedAt": { "type": "string" },
+        "reviewedAt": { "type": "string" },
+        "reviewedBy": { "type": "string" },
+        "approvalToken": { "type": "string" },
+        "rejectionReason": { "type": "string" }
+      },
+      "required": ["userId", "email", "status", "requestedAt"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": "UserProfile",
+      "description": "User account document"
+    },
+    "/users/{userId}/projects/{projectId}": {
+      "schema": "UserProject",
+      "description": "User feasibility study projects"
+    },
+    "/access_requests/{userId}": {
+      "schema": "AccessRequest",
+      "description": "Access requests requiring approval from suarezjohnjoebertcpa@gmail.com"
+    }
+  }
+}

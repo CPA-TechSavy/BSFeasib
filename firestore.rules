@@ -1,0 +1,94 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Global default-deny catch-all (Pillar 4 / Global Safety Net)
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Helper functions
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    function isAdmin() {
+      return isSignedIn() && (
+        request.auth.token.email.lower() == 'suarezjohnjoebertcpa@gmail.com' ||
+        request.auth.token.email.lower() == 'gerbertovirtudazo2@gmail.com'
+      );
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() > 0 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    // User profile matching - PII isolation
+    match /users/{userId} {
+      allow get: if isOwner(userId);
+      allow list: if false;
+      allow create: if isOwner(userId)
+                    && isValidId(userId)
+                    && incoming().uid == request.auth.uid
+                    && incoming().email is string
+                    && incoming().email.size() <= 256;
+      allow update: if isOwner(userId)
+                    && isValidId(userId)
+                    && incoming().uid == existing().uid
+                    && incoming().email is string
+                    && incoming().email.size() <= 256;
+      allow delete: if isOwner(userId);
+
+      // User projects subcollection
+      match /projects/{projectId} {
+        allow get, list: if isOwner(userId);
+        allow create: if isOwner(userId)
+                      && isValidId(projectId)
+                      && incoming().userId == request.auth.uid
+                      && incoming().projectJson is string
+                      && incoming().projectJson.size() <= 1048576;
+        allow update: if isOwner(userId)
+                      && isValidId(projectId)
+                      && incoming().userId == existing().userId
+                      && incoming().projectJson is string
+                      && incoming().projectJson.size() <= 1048576;
+        allow delete: if isOwner(userId) && isValidId(projectId);
+      }
+    }
+
+    // Access authorization requests managed by suarezjohnjoebertcpa@gmail.com
+    match /access_requests/{userId} {
+      allow get: if isOwner(userId) || isAdmin();
+      allow list: if isAdmin();
+      allow create: if isOwner(userId)
+                    && isValidId(userId)
+                    && incoming().userId == request.auth.uid
+                    && incoming().email is string
+                    && incoming().email.size() <= 256
+                    && (incoming().status == 'pending' || isAdmin());
+      allow update: if isAdmin()
+                    || (isOwner(userId)
+                        && incoming().userId == existing().userId
+                        && incoming().status == existing().status);
+      allow delete: if isAdmin();
+    }
+
+    // Connection test document
+    match /test/{docId} {
+      allow read: if true;
+    }
+  }
+}
